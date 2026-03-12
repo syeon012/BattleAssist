@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>전투 시뮬레이터 v1.0</title>
+    <style>
+        body { font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; background: #fff; color: #000; margin: 0; display: flex; height: 100vh; overflow: hidden; position: relative; }
+        input, button { border: 1px solid #000; background: #fff; padding: 5px; font-size: 13px; }
+        button { cursor: pointer; transition: background 0.1s; font-weight: bold; }
+        button:hover { background: #000; color: #fff; }
+        
+        #setup-sidebar { width: 310px; border-right: 2px solid #000; padding: 20px; display: flex; flex-direction: column; overflow-y: auto; }
+        #main-battleground { flex: 1; padding: 20px; overflow-y: auto; background: #fafafa; }
+        #log-area { width: 340px; border-left: 2px solid #000; padding: 20px; display: flex; flex-direction: column; }
+
+        .section-title { font-weight: bold; border-bottom: 2px solid #000; margin-bottom: 10px; padding-bottom: 5px; margin-top: 20px; }
+        .char-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px; }
+        .char-card { border: 1px solid #000; padding: 15px; background: #fff; position: relative; }
+        .char-card.current-turn { border: 4px solid #000; }
+        .char-card.waiting-reaction { border: 4px double #000; background: #f0f0f0; }
+        .char-card.inactive { opacity: 0.5; filter: grayscale(1); }
+        
+        .hp-bar-container { height: 10px; border: 1px solid #000; margin: 10px 0; background: #fff; }
+        .hp-bar-fill { height: 100%; background: #000; transition: width 0.3s; }
+        
+        #log-container { flex: 1; border: 1px solid #000; padding: 10px; font-size: 12px; overflow-y: auto; background: #fff; line-height: 1.6; white-space: pre-wrap; }
+        .sub-info { color: #888; font-size: 11px; }
+        .important-msg { font-weight: bold; color: #000; border-bottom: 1px solid #eee; display: block; margin-top: 5px; }
+
+        .stat-input-group { margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+        .stat-input-group input { width: 50px; text-align: center; }
+        
+        #dice-config-table { width: 100%; font-size: 10px; border-collapse: collapse; margin-top: 10px; }
+        #dice-config-table th, #dice-config-table td { border: 1px solid #ccc; padding: 2px; text-align: center; }
+        #dice-config-table input { width: 90%; border: none; padding: 2px; text-align: center; font-family: monospace; }
+
+        .reaction-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 10px; }
+        .delete-btn { position: absolute; top: 5px; right: 5px; border: 1px solid #ff0000; font-size: 10px; color: red; background: #fff; }
+        .heal-btn { background: #e8f5e9; color: #2e7d32; border: 1px solid #2e7d32; font-size: 11px; padding: 2px 8px; margin-top: 5px;}
+        .heal-btn:hover { background: #2e7d32; color: #fff; }
+
+        #victory-overlay { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #000; color: #fff; padding: 40px; font-size: 30px; font-weight: 900; border: 10px double #fff; z-index: 9999; text-align: center;}
+    </style>
+</head>
+<body>
+
+<div id="victory-overlay" onclick="this.style.display='none'"></div>
+
+<div id="setup-sidebar">
+    <div class="section-title">캐릭터 생성</div>
+    <input type="text" id="name" placeholder="이름" style="width: 92%; margin-bottom: 10px;">
+    <div class="stat-input-group"><span>공격(ATK)</span><input type="number" id="atk" value="1" min="1" max="8"></div>
+    <div class="stat-input-group"><span>체력(HP)</span><input type="number" id="hp_s" value="1" min="1" max="8"></div>
+    <div class="stat-input-group"><span>방어(DEF)</span><input type="number" id="def" value="1" min="1" max="8"></div>
+    <div class="stat-input-group"><span>민첩(AGI)</span><input type="number" id="agi" value="1" min="1" max="8"></div>
+    <div class="stat-input-group"><span>지능(INT)</span><input type="number" id="int" value="1" min="1" max="8"></div>
+    <button onclick="addCharacter()" style="width: 100%; margin-top: 5px;">추가</button>
+
+    <div class="section-title">스테이터스 설정</div>
+    <table id="dice-config-table">
+        <thead>
+            <tr><th>Lv</th><th>HP</th><th>공격</th><th>방어%</th><th>회피%</th><th>지능배율</th></tr>
+        </thead>
+        <tbody id="dice-mapping-body"></tbody>
+    </table>
+
+    <div class="section-title">전투 & 회복 설정</div>
+    <div class="stat-input-group">
+        <span>회복량</span>
+        <input type="number" id="global-heal-amount" value="20">
+    </div>
+    <button onclick="startBattle()" style="background: #000; color: #fff; width: 100%; margin-bottom: 5px;">민첩순 시작</button>
+    <button onclick="undo()" style="width: 100%; border-color: red; margin-bottom: 5px;">되돌리기</button>
+    <button onclick="manualNextTurn()" style="width: 100%;">차례 넘기기</button>
+</div>
+
+<div id="main-battleground">
+    <div id="turn-display" style="font-weight: bold; margin-bottom: 15px; border-left: 5px solid #000; padding-left: 10px;">전투 대기 중</div>
+    <div id="char-list" class="char-grid"></div>
+</div>
+
+<div id="log-area">
+    <div class="section-title">전투 로그</div>
+    <div id="log-container"></div>
+    <button onclick="downloadLog()" style="margin-top: 10px; width: 100%;">로그 추출 (.txt)</button>
+</div>
+
+<script>
+    let chars = [];
+    let history = [];
+    let currentIdx = 0;
+    let pendingAttack = null;
+    let fullLogText = "";
+
+    const STORAGE_KEY = 'dice_config';
+    const defaultMapping = {
+        hp:  { 1:100, 2:120, 3:140, 4:160, 5:180, 6:200, 7:220, 8:250 },
+        atk: { 1:"1d4", 2:"1d6", 3:"1d8", 4:"1d10", 5:"2d6", 6:"2d8", 7:"3d6", 8:"3d8" },
+        def: { 1:10, 2:20, 3:30, 4:40, 5:50, 6:55, 7:60, 8:70 }, 
+        agi: { 1:5, 2:15, 3:25, 4:35, 5:45, 6:50, 7:55, 8:65 },
+        int: { 1:0.5, 2:0.7, 3:0.9, 4:1.0, 5:1.1, 6:1.3, 7:1.5, 8:2.0 }
+    };
+
+    let diceMapping = JSON.parse(localStorage.getItem(STORAGE_KEY)) || defaultMapping;
+
+    function saveConfig() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(diceMapping));
+    }
+
+    function initConfigTable() {
+        const body = document.getElementById('dice-mapping-body');
+        body.innerHTML = "";
+        for(let i=1; i<=8; i++) {
+            body.innerHTML += `
+                <tr>
+                    <td>${i}</td>
+                    <td><input type="number" value="${diceMapping.hp[i]}" onchange="updateDiceMap('hp', ${i}, Number(this.value))"></td>
+                    <td><input type="text" value="${diceMapping.atk[i]}" onchange="updateDiceMap('atk', ${i}, this.value)"></td>
+                    <td><input type="number" value="${diceMapping.def[i]}" onchange="updateDiceMap('def', ${i}, Number(this.value))"></td>
+                    <td><input type="number" value="${diceMapping.agi[i]}" onchange="updateDiceMap('agi', ${i}, Number(this.value))"></td>
+                    <td><input type="number" step="0.1" value="${diceMapping.int[i]}" onchange="updateDiceMap('int', ${i}, Number(this.value))"></td>
+                </tr>`;
+        }
+    }
+
+    function updateDiceMap(type, lv, val) {
+        diceMapping[type][lv] = val;
+        saveConfig();
+    }
+
+    function healCharacter(idx) {
+        save();
+        const amount = Number(document.getElementById('global-heal-amount').value) || 0;
+        const c = chars[idx];
+        const prevHp = c.curHp;
+        c.curHp = Math.min(c.maxHp, c.curHp + amount);
+        c.dead = false;
+        addLog(`${c.name} 회복! +${c.curHp - prevHp} (HP: ${c.curHp}/${c.maxHp})`, "sub");
+        render();
+    }
+
+    function addCharacter() {
+        save();
+        const nameInput = document.getElementById('name');
+        const name = nameInput.value || `참가자 ${chars.length + 1}`;
+        const s = {
+            atk: parseInt(document.getElementById('atk').value),
+            hp_s: parseInt(document.getElementById('hp_s').value),
+            def: parseInt(document.getElementById('def').value),
+            agi: parseInt(document.getElementById('agi').value),
+            int: parseInt(document.getElementById('int').value)
+        };
+        const maxHp = diceMapping.hp[s.hp_s];
+        chars.push({ name, ...s, maxHp: maxHp, curHp: maxHp, dead: false, escaped: false });
+        nameInput.value = "";
+        render();
+    }
+
+    function deleteChar(e, idx) {
+        e.stopPropagation();
+        if(!confirm(`${chars[idx].name}을(를) 삭제하시겠습니까?`)) return;
+        save();
+        chars.splice(idx, 1);
+        if (currentIdx >= chars.length) currentIdx = 0;
+        pendingAttack = null;
+        render();
+    }
+
+    function startBattle() {
+        if (chars.length < 1) return;
+        save();
+        chars.sort((a, b) => b.agi - a.agi);
+        currentIdx = 0;
+        addLog("전투 시작!", "important");
+        addLog(`첫 번째 차례: ${chars[currentIdx].name}`, "sub");
+        render();
+    }
+
+    function resolveAttack(type) {
+        if (!pendingAttack) return;
+        save();
+        const atkChar = chars[pendingAttack.atkIdx];
+        const defChar = chars[pendingAttack.defIdx];
+        let success = false;
+
+        if (type === '방어' || type === '회피') {
+            const statType = type === '방어' ? 'def' : 'agi';
+            const rate = diceMapping[statType][defChar[statType]];
+            const roll = Math.floor(Math.random() * 100) + 1;
+            addLog(`${defChar.name}의 ${type} 시도: ${roll}% (${rate}% 이하 성공)`, "sub");
+            if (roll <= rate) {
+                addLog(`${defChar.name} ${type} 성공!`, "important");
+                success = true;
+            }
+        }
+
+        if (!success) {
+            const match = diceMapping.atk[atkChar.atk].toLowerCase().match(/(\d+)d(\d+)/);
+            let sum = 0, rolls = [];
+            if(match) {
+                for(let i=0; i<match[1]; i++) {
+                    let r = Math.floor(Math.random()*match[2])+1;
+                    sum += r; rolls.push(r);
+                }
+                addLog(`다이스: [${rolls.join(', ')}] = ${sum}`, "sub");
+            } else { 
+                sum = parseInt(diceMapping.atk[atkChar.atk]) || 0; 
+                addLog(`고정 공격력: ${sum}`, "sub");
+            }
+
+            const multiplier = diceMapping.int[atkChar.int];
+            const dmg = Math.round(sum * multiplier);
+            defChar.curHp -= dmg;
+            if (defChar.curHp <= 0) { defChar.curHp = 0; defChar.dead = true; }
+            addLog(`${defChar.name}에게 ${dmg} 피해! (잔여 HP: ${defChar.curHp})`, "important");
+        }
+        pendingAttack = null;
+        checkVictory();
+        nextTurn();
+    }
+
+    function render() {
+        const list = document.getElementById('char-list');
+        list.innerHTML = "";
+        if (chars.length > 0) document.getElementById('turn-display').innerText = `현재 차례: ${chars[currentIdx].name}`;
+
+        chars.forEach((c, i) => {
+            const isTurn = currentIdx === i && !pendingAttack;
+            const isTarget = pendingAttack && pendingAttack.defIdx === i;
+            const cardClass = `char-card ${c.dead || c.escaped ? 'inactive' : ''} ${isTurn ? 'current-turn' : ''} ${isTarget ? 'waiting-reaction' : ''}`;
+            
+            let actions = '';
+            if (isTurn && !c.dead && !c.escaped) {
+                actions += `<button onclick="activeEscape(${i})" style="width:100%; border-style:dashed; margin-bottom:5px;">도주 시도</button>`;
+                chars.forEach((target, ti) => {
+                    if (i !== ti && !target.dead && !target.escaped) 
+                        actions += `<button onclick="initAttack(${i}, ${ti})" style="margin:2px;">공격: ${target.name}</button>`;
+                });
+            }
+
+            list.innerHTML += `
+                <div class="${cardClass}">
+                    <button class="delete-btn" onclick="deleteChar(event, ${i})">삭제</button>
+                    <div style="font-weight:bold;">${c.name} ${c.escaped ? '[탈출]' : (c.dead ? '[사망]' : '')}</div>
+                    <div style="font-size:10px; color:#666;">Lv - H:${c.hp_s} A:${c.atk} D:${c.def} G:${c.agi} I:${c.int}</div>
+                    <div class="hp-bar-container"><div class="hp-bar-fill" style="width:${(c.curHp/c.maxHp)*100}%"></div></div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <button class="heal-btn" onclick="healCharacter(${i})">회복</button>
+                        <span style="font-size:11px;">HP ${c.curHp} / ${c.maxHp}</span>
+                    </div>
+                    <div style="margin-top:10px;">${actions}</div>
+                    ${isTarget ? `
+                        <div class="reaction-btns">
+                            <button onclick="resolveAttack('방어')">방어(${diceMapping.def[c.def]}%)</button>
+                            <button onclick="resolveAttack('회피')">회피(${diceMapping.agi[c.agi]}%)</button>
+                            <button onclick="resolveAttack('무대응')" style="grid-column: span 2;">무대응</button>
+                        </div>
+                    ` : ''}
+                </div>`;
+        });
+    }
+
+    function activeEscape(idx) {
+        save();
+        const c = chars[idx];
+        const rate = diceMapping.agi[c.agi] + 10;
+        const roll = Math.floor(Math.random()*100)+1;
+        addLog(`${c.name} 탈출 판정: ${roll}% (목표: ${rate}% 이하)`, "sub");
+        if(roll <= rate) { 
+            c.escaped = true; 
+            addLog(`${c.name} 도주 성공!`, "important"); 
+            checkVictory(); 
+        } else { 
+            addLog(`${c.name} 도주 실패.`, "important"); 
+        }
+        nextTurn();
+    }
+
+    function initAttack(atkIdx, defIdx) { 
+        pendingAttack = { atkIdx, defIdx }; 
+        addLog(`${chars[atkIdx].name} → ${chars[defIdx].name} 공격 선언!`, "sub");
+        render(); 
+    }
+
+    function manualNextTurn() {
+        addLog(`${chars[currentIdx].name}이(가) 차례를 넘겼습니다.`, "sub");
+        nextTurn();
+    }
+
+    function nextTurn() {
+        if (chars.length === 0) return;
+        let count = 0;
+        do { 
+            currentIdx = (currentIdx + 1) % chars.length; 
+            count++; 
+        } while ((chars[currentIdx].dead || chars[currentIdx].escaped) && count < chars.length);
+        
+        if (count < chars.length) {
+            addLog(`▶ 다음 차례: ${chars[currentIdx].name}`, "sub");
+        }
+        render();
+    }
+
+    function save() { 
+        history.push(JSON.stringify({ chars: JSON.parse(JSON.stringify(chars)), currentIdx })); 
+        if(history.length>30) history.shift(); 
+    }
+
+    function undo() { 
+        if(history.length > 0){ 
+            const d = JSON.parse(history.pop()); 
+            chars = d.chars; 
+            currentIdx = d.currentIdx; 
+            pendingAttack = null; 
+            addLog("⏪ 되돌리기 실행", "important");
+            render(); 
+        } else {
+            addLog("되돌릴 수 없습니다.", "sub");
+        }
+    }
+
+    function addLog(m, t) {
+        const c = document.getElementById('log-container');
+        const timestamp = new Date().toLocaleTimeString();
+        const prefix = t === 'sub' ? '└ ' : '';
+        const logEntry = `[${timestamp}] ${prefix}${m}`;
+        
+        c.innerHTML += `<div class="${t==='important'?'important-msg':(t==='sub'?'sub-info':'')}">${prefix}${m}</div>`;
+        c.scrollTop = c.scrollHeight;
+        
+        fullLogText += logEntry + "\n";
+    }
+
+    function downloadLog() {
+        const blob = new Blob([fullLogText], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `battle_log_${new Date().getTime()}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    function checkVictory() {
+        const alive = chars.filter(c => !c.dead && !c.escaped);
+        if (chars.length > 1 && alive.length === 1) {
+            const o = document.getElementById('victory-overlay');
+            o.innerHTML = `${alive[0].name} 승리!`; 
+            o.style.display = 'block';
+            addLog(`전투 종료! 최종 승자: ${alive[0].name}`, "important");
+        }
+    }
+    
+    window.onload = initConfigTable;
+</script>
+
+</body>
+</html>
